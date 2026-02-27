@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.sonar.plugins</groupId>
+    <artifactId>sonar-inline-suppression-plugin</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>SonarQube Inline Suppression Audit Plugin</name>
+    <description>
+        Detects and blocks inline suppression patterns (NOSONAR, @SuppressWarnings, @Suppress, [SuppressMessage])
+        in source code across multiple languages. Prevents developers from bypassing SonarQube static analysis.
+    </description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.release>17</maven.compiler.release>
+
+        <!--
+            Plugin API version 10.11.0.2468 (from official SonarQube plugin example).
+            Ensures broad compatibility:
+              - SonarQube 2025.1 (API 11.1.0) loads plugins requiring API >= 10.11
+              - SonarQube 2026.1 (API 13.4.3) loads plugins requiring API >= 10.11
+            For building against a newer API without breaking older compatibility,
+            use the pluginApiMinVersion property in sonar-packaging-maven-plugin config.
+
+            PREFERRED BUILD: If you have access to the SonarSource Maven repository,
+            switch packaging to "sonar-plugin" and uncomment the sonar-packaging-maven-plugin
+            section at the bottom of this file for the official build process.
+        -->
+        <sonar.plugin.api.version>10.11.0.2468</sonar.plugin.api.version>
+        <junit.version>5.10.2</junit.version>
+        <mockito.version>5.11.0</mockito.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.sonarsource.api.plugin</groupId>
+            <artifactId>sonar-plugin-api</artifactId>
+            <version>${sonar.plugin.api.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.12</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Test dependencies -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>${mockito.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <version>${mockito.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>3.25.3</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <release>17</release>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+            </plugin>
+            <!--
+                JAR manifest entries required by SonarQube to load this as a plugin.
+                These entries replicate what sonar-packaging-maven-plugin generates.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.1</version>
+                <configuration>
+                    <archive>
+                        <manifestEntries>
+                            <Plugin-Key>inlinesuppression</Plugin-Key>
+                            <Plugin-Class>org.sonar.plugins.inlinesuppression.InlineSuppressionPlugin</Plugin-Class>
+                            <Plugin-Name>Inline Suppression Audit</Plugin-Name>
+                            <Plugin-Description>Detects inline suppression patterns that bypass SonarQube analysis</Plugin-Description>
+                            <Plugin-Version>${project.version}</Plugin-Version>
+                            <Sonar-Version>${sonar.plugin.api.version}</Sonar-Version>
+                            <Plugin-Organization>Custom</Plugin-Organization>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <!--
+        PREFERRED BUILD (uncomment when sonar-packaging-maven-plugin is accessible):
+
+        1. Change <packaging>jar</packaging> to <packaging>sonar-plugin</packaging>
+        2. Remove the maven-jar-plugin section above
+        3. Uncomment the plugin below:
+
+        <plugin>
+            <groupId>org.sonarsource.sonar-packaging-maven-plugin</groupId>
+            <artifactId>sonar-packaging-maven-plugin</artifactId>
+            <version>1.23.0.740</version>
+            <extensions>true</extensions>
+            <configuration>
+                <pluginKey>inlinesuppression</pluginKey>
+                <pluginClass>org.sonar.plugins.inlinesuppression.InlineSuppressionPlugin</pluginClass>
+                <pluginName>Inline Suppression Audit</pluginName>
+                <pluginDescription>Detects inline suppression patterns that bypass SonarQube analysis</pluginDescription>
+            </configuration>
+        </plugin>
+    -->
+</project>

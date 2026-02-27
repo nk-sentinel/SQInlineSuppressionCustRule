@@ -1,0 +1,128 @@
+<h2>Inline suppression of static analysis findings is not allowed</h2>
+
+<p>
+  Using inline suppression mechanisms to bypass SonarQube static analysis is a security risk.
+  Suppressions hide potential vulnerabilities, bugs, and code smells from review, undermining
+  the quality gate and compliance requirements.
+</p>
+
+<h3>This rule detects the following suppression patterns:</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Pattern</th>
+      <th>Languages</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>// NOSONAR</code></td>
+      <td>All</td>
+      <td>Suppresses <strong>all</strong> SonarQube rules on the annotated line. Also detected in
+        <code>/* NOSONAR */</code>, <code># NOSONAR</code>, <code>&lt;!-- NOSONAR --&gt;</code>,
+        and <code>-- NOSONAR</code> comment styles.</td>
+    </tr>
+    <tr>
+      <td><code>@SuppressWarnings("java:S1234")</code></td>
+      <td>Java, Kotlin</td>
+      <td>Suppresses specific SonarQube rule(s). Detected for all language rule prefixes
+        (<code>java:</code>, <code>squid:</code>, <code>csharpsquid:</code>, <code>javascript:</code>,
+        <code>typescript:</code>, <code>python:</code>, <code>kotlin:</code>, <code>go:</code>,
+        <code>php:</code>, <code>ruby:</code>, <code>scala:</code>, <code>vbnet:</code>,
+        <code>xml:</code>, <code>css:</code>, <code>web:</code>, <code>plsql:</code>,
+        <code>tsql:</code>, <code>c:</code>, <code>cpp:</code>, and more).
+        Also detected: <code>@SuppressWarnings("all")</code> and multi-rule suppression
+        <code>@SuppressWarnings({"java:S106", "java:S1186"})</code>.</td>
+    </tr>
+    <tr>
+      <td><code>@Suppress("kotlin:S1234")</code></td>
+      <td>Kotlin</td>
+      <td>Kotlin-specific annotation for suppressing SonarQube rules.</td>
+    </tr>
+    <tr>
+      <td><code>[SuppressMessage("SonarAnalyzer", "S1234")]</code></td>
+      <td>C#, VB.NET</td>
+      <td>Suppresses SonarQube Roslyn analyzer rules. Detected with optional fully-qualified name
+        <code>[System.Diagnostics.CodeAnalysis.SuppressMessage(...)]</code> and attribute targets
+        (<code>assembly:</code>, <code>module:</code>, etc.).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Noncompliant code examples</h3>
+
+<h4>Java — NOSONAR</h4>
+<pre>
+System.out.println("debug"); // NOSONAR — Noncompliant
+</pre>
+
+<h4>Java — @SuppressWarnings (single rule)</h4>
+<pre>
+@SuppressWarnings("java:S106")  // Noncompliant
+public void log() {
+    System.out.println("message");
+}
+</pre>
+
+<h4>Java — @SuppressWarnings (multiple rules)</h4>
+<pre>
+@SuppressWarnings({"java:S106", "java:S1186"})  // Noncompliant
+public void log() {
+    System.out.println("message");
+}
+</pre>
+
+<h4>Java — @SuppressWarnings("all")</h4>
+<pre>
+@SuppressWarnings("all")  // Noncompliant
+public class MyClass { }
+</pre>
+
+<h4>Kotlin — @Suppress</h4>
+<pre>
+@Suppress("kotlin:S1234")  // Noncompliant
+fun process() { }
+</pre>
+
+<h4>C# — [SuppressMessage]</h4>
+<pre>
+[SuppressMessage("SonarAnalyzer", "S1234")]  // Noncompliant
+public void Process() { }
+</pre>
+
+<h4>Python — NOSONAR</h4>
+<pre>
+x = eval(input)  # NOSONAR — Noncompliant
+</pre>
+
+<h3>Compliant solution</h3>
+<p>Fix the underlying issue reported by SonarQube instead of suppressing it:</p>
+<pre>
+// Instead of suppressing S106, use a proper logger:
+private static final Logger LOG = LoggerFactory.getLogger(MyClass.class);
+
+public void log() {
+    LOG.info("message");  // Compliant
+}
+</pre>
+
+<h3>Exceptions</h3>
+<p>
+  This rule does not flag <code>@SuppressWarnings</code> annotations that only suppress
+  standard Java compiler warnings (e.g., <code>"unchecked"</code>, <code>"deprecation"</code>,
+  <code>"serial"</code>) without any SonarQube rule references.
+</p>
+
+<h3>Future improvements</h3>
+<ul>
+  <li><code>#pragma warning disable S1234</code> (C#) — pragma-based suppression</li>
+  <li><code>@Generated</code> / <code>@javax.annotation.Generated</code> (Java) — generated code exclusion</li>
+  <li><code>[GeneratedCode]</code> (C#) — generated code attribute exclusion</li>
+</ul>
+
+<h3>See also</h3>
+<ul>
+  <li><a href="https://docs.sonarsource.com/sonarqube-server/latest/project-administration/analysis-scope/">SonarQube: Analysis Scope</a></li>
+</ul>

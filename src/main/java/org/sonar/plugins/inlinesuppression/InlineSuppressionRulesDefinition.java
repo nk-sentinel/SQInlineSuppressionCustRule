@@ -75,7 +75,7 @@ public class InlineSuppressionRulesDefinition implements RulesDefinition {
             .setHtmlDescription(loadRuleDescription())
             .setSeverity("BLOCKER")
             .setType(RuleType.VULNERABILITY)
-            .setTags("security", "suppression", "audit", "compliance");
+            .setTags("policy", "suppression", "audit", "compliance");
 
         rule.setDebtRemediationFunction(
             rule.debtRemediationFunctions().constantPerIssue("30min"));

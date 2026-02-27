@@ -82,7 +82,7 @@ class InlineSuppressionRulesDefinitionTest {
         RulesDefinition.Rule rule = repo.rule(InlineSuppressionRulesDefinition.RULE_KEY);
 
         assertThat(rule).isNotNull();
-        assertThat(rule.tags()).contains("security", "suppression", "audit", "compliance");
+        assertThat(rule.tags()).contains("policy", "suppression", "audit", "compliance");
     }
 
     @Test

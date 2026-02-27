@@ -167,7 +167,7 @@ class InlineSuppressionSensorTest {
         when(filePredicates.hasType(InputFile.Type.MAIN)).thenReturn(mainPredicate);
         when(fileSystem.inputFiles(mainPredicate)).thenReturn(List.of(inputFile));
         when(inputFile.language()).thenReturn(language);
-        when(inputFile.uri()).thenReturn(URI.create("file:///test/Test.java"));
+        lenient().when(inputFile.uri()).thenReturn(URI.create("file:///test/Test.java"));
 
         if (language != null
                 && InlineSuppressionRulesDefinition.SUPPORTED_LANGUAGES.contains(language)) {

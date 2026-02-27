@@ -86,11 +86,11 @@ public final class SuppressionPatternRegistry {
         Pattern.compile(
             "(?:java|squid|csharpsquid|javascript|typescript|python|kotlin"
             + "|php|ruby|go|scala|vbnet|xml|css|web|plsql|tsql"
-            + "|c|cpp|objc|swift|abap|cobol|flex)\\s*:\\s*S\\d{4,}");
+            + "|c|cpp|objc|swift|abap|cobol|flex)\\s*:\\s*S\\d{3,}");
 
-    /** Bare SonarQube rule reference — S followed by 4+ digits (e.g. S1234) */
+    /** Bare SonarQube rule reference — S followed by 3+ digits (e.g. S106, S1234) */
     static final Pattern BARE_SQ_RULE =
-        Pattern.compile("\\bS\\d{4,}\\b");
+        Pattern.compile("\\bS\\d{3,}\\b");
 
     /** "all" literal inside a quoted string — suppresses ALL rules */
     static final Pattern ALL_SUPPRESS =

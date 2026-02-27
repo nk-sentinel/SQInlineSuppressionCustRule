@@ -41,3 +41,35 @@ jobs:
           name: test-results
           path: target/surefire-reports/
           retention-days: 14
+
+      - name: Extract version from pom.xml
+        if: success() && github.event_name == 'push'
+        id: version
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Plugin version: $VERSION"
+
+      - name: Create GitHub Release
+        if: success() && github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}-build.${{ github.run_number }}
+          name: Release v${{ steps.version.outputs.version }} (Build #${{ github.run_number }})
+          body: |
+            ## SonarQube Inline Suppression Audit Plugin
+
+            **Version:** ${{ steps.version.outputs.version }}
+            **Build:** #${{ github.run_number }}
+            **Branch:** ${{ github.ref_name }}
+            **Commit:** ${{ github.sha }}
+
+            ### Installation
+            1. Download the plugin JAR from the assets below
+            2. Copy it to your SonarQube `extensions/plugins/` directory
+            3. Restart SonarQube
+          files: target/sonar-inline-suppression-plugin-*.jar
+          draft: false
+          prerelease: ${{ github.ref_name != 'main' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

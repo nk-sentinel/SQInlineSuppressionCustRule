@@ -43,11 +43,14 @@ public final class SuppressionPatternRegistry {
     /**
      * Represents a detected suppression pattern in a source file.
      *
-     * @param lineNumber 1-based line number where the suppression was found
-     * @param type       the kind of suppression detected
-     * @param message    human-readable message for the SonarQube issue
+     * @param lineNumber       1-based line number where the issue should be reported
+     *                         (may differ from actualLineNumber for NOSONAR to avoid self-suppression)
+     * @param actualLineNumber 1-based line number where the suppression was actually found
+     * @param type             the kind of suppression detected
+     * @param message          human-readable message for the SonarQube issue
      */
-    public record SuppressionMatch(int lineNumber, SuppressionType type, String message) {}
+    public record SuppressionMatch(int lineNumber, int actualLineNumber,
+                                    SuppressionType type, String message) {}
 
     // ---------------------------------------------------------------------------
     // Patterns
@@ -56,6 +59,10 @@ public final class SuppressionPatternRegistry {
     /** NOSONAR comment — case insensitive, matches in any comment style (// # /* <!-- --) */
     static final Pattern NOSONAR_PATTERN =
         Pattern.compile("\\bNOSONAR\\b", Pattern.CASE_INSENSITIVE);
+
+    /** Matches double-quoted and single-quoted string literals (handles escaped quotes). */
+    private static final Pattern STRING_LITERAL_PATTERN =
+        Pattern.compile("\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'");
 
     /** @SuppressWarnings annotation — captures the annotation value content */
     static final Pattern SUPPRESS_WARNINGS_PATTERN =
@@ -77,6 +84,17 @@ public final class SuppressionPatternRegistry {
             "\\[\\s*(?:(?:assembly|module|type|method|return|param)\\s*:\\s*)?"
             + "(?:System\\.Diagnostics\\.CodeAnalysis\\.)?SuppressMessage\\s*\\("
             + "([\\s\\S]*?)\\)\\s*\\]");
+
+    /**
+     * &lt;SuppressMessage&gt; attribute (VB.NET) — handles optional attribute targets
+     * (Assembly:, Module:, etc.) and fully-qualified name with angle-bracket syntax.
+     */
+    static final Pattern VB_SUPPRESS_MESSAGE_PATTERN =
+        Pattern.compile(
+            "<\\s*(?:(?:Assembly|Module|Type|Method|Return|Param)\\s*:\\s*)?"
+            + "(?:System\\.Diagnostics\\.CodeAnalysis\\.)?SuppressMessage\\s*\\("
+            + "([\\s\\S]*?)\\)\\s*>",
+            Pattern.CASE_INSENSITIVE);
 
     /**
      * SonarQube rule reference with a language prefix.
@@ -128,6 +146,9 @@ public final class SuppressionPatternRegistry {
         // 4. [SuppressMessage] (C#) — multiline regex
         findSuppressMessageMatches(content, reportedLines, matches);
 
+        // 5. <SuppressMessage> (VB.NET) — multiline regex
+        findVbSuppressMessageMatches(content, reportedLines, matches);
+
         return matches;
     }
 
@@ -138,13 +159,28 @@ public final class SuppressionPatternRegistry {
     private static void findNosonarMatches(String content, Set<Integer> reportedLines,
                                            List<SuppressionMatch> matches) {
         String[] lines = content.split("\n", -1);
+        int totalLines = lines.length;
         for (int i = 0; i < lines.length; i++) {
-            if (NOSONAR_PATTERN.matcher(lines[i]).find()) {
-                int lineNum = i + 1;
-                if (reportedLines.add(lineNum)) {
-                    matches.add(new SuppressionMatch(lineNum, SuppressionType.NOSONAR,
-                        "Remove this use of \"NOSONAR\". "
-                        + "Suppressing SonarQube issues inline is not permitted."));
+            if (NOSONAR_PATTERN.matcher(stripStringLiterals(lines[i])).find()) {
+                int actualLine = i + 1;
+                // Report on an adjacent line to avoid SonarQube's NoSonarFilter
+                // self-suppression (built-in NOSONAR handling suppresses ALL issues
+                // on the NOSONAR line, including ours).
+                int reportLine;
+                if (actualLine > 1) {
+                    reportLine = actualLine - 1;
+                } else if (totalLines > 1) {
+                    reportLine = actualLine + 1;
+                } else {
+                    reportLine = actualLine;
+                }
+                if (reportedLines.add(actualLine)) {
+                    String message = String.format(
+                        "Remove this use of \"NOSONAR\" (line %d). "
+                        + "Suppressing SonarQube issues inline is not permitted.",
+                        actualLine);
+                    matches.add(new SuppressionMatch(reportLine, actualLine,
+                        SuppressionType.NOSONAR, message));
                 }
             }
         }
@@ -154,8 +190,12 @@ public final class SuppressionPatternRegistry {
                                                SuppressionType type, String annotationName,
                                                Set<Integer> reportedLines,
                                                List<SuppressionMatch> matches) {
+        int totalLines = content.split("\n", -1).length;
         Matcher matcher = pattern.matcher(content);
         while (matcher.find()) {
+            if (isInsideComment(content, matcher.start())) {
+                continue;
+            }
             String annotationContent = matcher.group(1);
             List<String> ruleRefs = extractRuleReferences(annotationContent);
             boolean hasAllSuppress = ALL_SUPPRESS.matcher(annotationContent).find();
@@ -163,8 +203,20 @@ public final class SuppressionPatternRegistry {
             if (!ruleRefs.isEmpty() || hasAllSuppress) {
                 int lineNum = getLineNumber(content, matcher.start());
                 if (reportedLines.add(lineNum)) {
-                    String message = buildAnnotationMessage(annotationName, ruleRefs, hasAllSuppress);
-                    matches.add(new SuppressionMatch(lineNum, type, message));
+                    // For "all" suppressions, report on adjacent line to avoid
+                    // self-suppression by the language analyzer's own handling
+                    int reportLine = lineNum;
+                    if (hasAllSuppress) {
+                        if (lineNum > 1) {
+                            reportLine = lineNum - 1;
+                        } else if (totalLines > 1) {
+                            reportLine = lineNum + 1;
+                        }
+                    }
+                    String message = buildAnnotationMessage(
+                        annotationName, ruleRefs, hasAllSuppress,
+                        hasAllSuppress ? lineNum : 0);
+                    matches.add(new SuppressionMatch(reportLine, lineNum, type, message));
                 }
             }
         }
@@ -174,6 +226,9 @@ public final class SuppressionPatternRegistry {
                                                     List<SuppressionMatch> matches) {
         Matcher matcher = SUPPRESS_MESSAGE_PATTERN.matcher(content);
         while (matcher.find()) {
+            if (isInsideComment(content, matcher.start())) {
+                continue;
+            }
             String attrContent = matcher.group(1);
             List<String> ruleRefs = extractRuleReferences(attrContent);
             boolean hasSonarCategory = SONAR_CATEGORY.matcher(attrContent).find();
@@ -187,8 +242,35 @@ public final class SuppressionPatternRegistry {
                     String message = String.format(
                         "Remove this [SuppressMessage] attribute suppressing %s. "
                         + "Suppressing SonarQube rules is not permitted.", detail);
-                    matches.add(new SuppressionMatch(lineNum, SuppressionType.SUPPRESS_MESSAGE,
-                        message));
+                    matches.add(new SuppressionMatch(lineNum, lineNum,
+                        SuppressionType.SUPPRESS_MESSAGE, message));
+                }
+            }
+        }
+    }
+
+    private static void findVbSuppressMessageMatches(String content, Set<Integer> reportedLines,
+                                                      List<SuppressionMatch> matches) {
+        Matcher matcher = VB_SUPPRESS_MESSAGE_PATTERN.matcher(content);
+        while (matcher.find()) {
+            if (isInsideComment(content, matcher.start())) {
+                continue;
+            }
+            String attrContent = matcher.group(1);
+            List<String> ruleRefs = extractRuleReferences(attrContent);
+            boolean hasSonarCategory = SONAR_CATEGORY.matcher(attrContent).find();
+
+            if (!ruleRefs.isEmpty() || hasSonarCategory) {
+                int lineNum = getLineNumber(content, matcher.start());
+                if (reportedLines.add(lineNum)) {
+                    String detail = !ruleRefs.isEmpty()
+                        ? "rule(s): " + String.join(", ", ruleRefs)
+                        : "SonarQube rules";
+                    String message = String.format(
+                        "Remove this <SuppressMessage> attribute suppressing %s. "
+                        + "Suppressing SonarQube rules is not permitted.", detail);
+                    matches.add(new SuppressionMatch(lineNum, lineNum,
+                        SuppressionType.SUPPRESS_MESSAGE, message));
                 }
             }
         }
@@ -200,11 +282,15 @@ public final class SuppressionPatternRegistry {
 
     private static String buildAnnotationMessage(String annotationName,
                                                   List<String> ruleRefs,
-                                                  boolean hasAllSuppress) {
+                                                  boolean hasAllSuppress,
+                                                  int actualLine) {
         if (hasAllSuppress) {
+            String lineRef = actualLine > 0
+                ? String.format(" (line %d)", actualLine) : "";
             return String.format(
-                "Remove this %s(\"all\") annotation. "
-                + "Blanket suppression of all warnings is not permitted.", annotationName);
+                "Remove this %s(\"all\") annotation%s. "
+                + "Blanket suppression of all warnings is not permitted.",
+                annotationName, lineRef);
         }
         return String.format(
             "Remove this %s annotation suppressing rule(s): %s. "
@@ -241,6 +327,73 @@ public final class SuppressionPatternRegistry {
         }
 
         return refs;
+    }
+
+    /**
+     * Checks whether the given character offset in the content falls inside a comment.
+     * Handles //, #, /* *&#47;, and &lt;!-- --&gt; comment styles while respecting string literals.
+     */
+    static boolean isInsideComment(String content, int offset) {
+        boolean inBlockComment = false;
+        boolean inHtmlComment = false;
+        boolean inString = false;
+        char stringChar = 0;
+
+        for (int i = 0; i < offset && i < content.length(); i++) {
+            char c = content.charAt(i);
+            char next = (i + 1 < content.length()) ? content.charAt(i + 1) : 0;
+
+            if (inString) {
+                if (c == '\\') { i++; continue; }
+                if (c == stringChar) { inString = false; }
+                continue;
+            }
+            if (inBlockComment) {
+                if (c == '*' && next == '/') { inBlockComment = false; i++; }
+                continue;
+            }
+            if (inHtmlComment) {
+                if (c == '-' && next == '-'
+                    && i + 2 < content.length() && content.charAt(i + 2) == '>') {
+                    inHtmlComment = false;
+                    i += 2;
+                }
+                continue;
+            }
+            // String literal start
+            if (c == '"' || c == '\'') {
+                inString = true;
+                stringChar = c;
+                continue;
+            }
+            // Block comment start
+            if (c == '/' && next == '*') { inBlockComment = true; i++; continue; }
+            // HTML/XML comment start
+            if (c == '<' && next == '!'
+                && i + 3 < content.length()
+                && content.charAt(i + 2) == '-' && content.charAt(i + 3) == '-') {
+                inHtmlComment = true;
+                i += 3;
+                continue;
+            }
+            // Single-line comment: // or #
+            if ((c == '/' && next == '/') || c == '#') {
+                int lineEnd = content.indexOf('\n', i);
+                if (lineEnd == -1) { lineEnd = content.length(); }
+                if (offset <= lineEnd) { return true; }
+                i = lineEnd;
+                continue;
+            }
+        }
+        return inBlockComment || inHtmlComment;
+    }
+
+    /**
+     * Strips string literal contents from a line so that NOSONAR inside strings is not matched.
+     * Handles both double-quoted and single-quoted strings with escaped quote support.
+     */
+    static String stripStringLiterals(String line) {
+        return STRING_LITERAL_PATTERN.matcher(line).replaceAll("\"\"");
     }
 
     /**

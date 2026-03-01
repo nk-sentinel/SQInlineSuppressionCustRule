@@ -190,8 +190,12 @@ public final class SuppressionPatternRegistry {
                                                SuppressionType type, String annotationName,
                                                Set<Integer> reportedLines,
                                                List<SuppressionMatch> matches) {
+        int totalLines = content.split("\n", -1).length;
         Matcher matcher = pattern.matcher(content);
         while (matcher.find()) {
+            if (isInsideComment(content, matcher.start())) {
+                continue;
+            }
             String annotationContent = matcher.group(1);
             List<String> ruleRefs = extractRuleReferences(annotationContent);
             boolean hasAllSuppress = ALL_SUPPRESS.matcher(annotationContent).find();
@@ -199,8 +203,20 @@ public final class SuppressionPatternRegistry {
             if (!ruleRefs.isEmpty() || hasAllSuppress) {
                 int lineNum = getLineNumber(content, matcher.start());
                 if (reportedLines.add(lineNum)) {
-                    String message = buildAnnotationMessage(annotationName, ruleRefs, hasAllSuppress);
-                    matches.add(new SuppressionMatch(lineNum, lineNum, type, message));
+                    // For "all" suppressions, report on adjacent line to avoid
+                    // self-suppression by the language analyzer's own handling
+                    int reportLine = lineNum;
+                    if (hasAllSuppress) {
+                        if (lineNum > 1) {
+                            reportLine = lineNum - 1;
+                        } else if (totalLines > 1) {
+                            reportLine = lineNum + 1;
+                        }
+                    }
+                    String message = buildAnnotationMessage(
+                        annotationName, ruleRefs, hasAllSuppress,
+                        hasAllSuppress ? lineNum : 0);
+                    matches.add(new SuppressionMatch(reportLine, lineNum, type, message));
                 }
             }
         }
@@ -210,6 +226,9 @@ public final class SuppressionPatternRegistry {
                                                     List<SuppressionMatch> matches) {
         Matcher matcher = SUPPRESS_MESSAGE_PATTERN.matcher(content);
         while (matcher.find()) {
+            if (isInsideComment(content, matcher.start())) {
+                continue;
+            }
             String attrContent = matcher.group(1);
             List<String> ruleRefs = extractRuleReferences(attrContent);
             boolean hasSonarCategory = SONAR_CATEGORY.matcher(attrContent).find();
@@ -234,6 +253,9 @@ public final class SuppressionPatternRegistry {
                                                       List<SuppressionMatch> matches) {
         Matcher matcher = VB_SUPPRESS_MESSAGE_PATTERN.matcher(content);
         while (matcher.find()) {
+            if (isInsideComment(content, matcher.start())) {
+                continue;
+            }
             String attrContent = matcher.group(1);
             List<String> ruleRefs = extractRuleReferences(attrContent);
             boolean hasSonarCategory = SONAR_CATEGORY.matcher(attrContent).find();
@@ -260,11 +282,15 @@ public final class SuppressionPatternRegistry {
 
     private static String buildAnnotationMessage(String annotationName,
                                                   List<String> ruleRefs,
-                                                  boolean hasAllSuppress) {
+                                                  boolean hasAllSuppress,
+                                                  int actualLine) {
         if (hasAllSuppress) {
+            String lineRef = actualLine > 0
+                ? String.format(" (line %d)", actualLine) : "";
             return String.format(
-                "Remove this %s(\"all\") annotation. "
-                + "Blanket suppression of all warnings is not permitted.", annotationName);
+                "Remove this %s(\"all\") annotation%s. "
+                + "Blanket suppression of all warnings is not permitted.",
+                annotationName, lineRef);
         }
         return String.format(
             "Remove this %s annotation suppressing rule(s): %s. "
@@ -301,6 +327,65 @@ public final class SuppressionPatternRegistry {
         }
 
         return refs;
+    }
+
+    /**
+     * Checks whether the given character offset in the content falls inside a comment.
+     * Handles //, #, /* *&#47;, and &lt;!-- --&gt; comment styles while respecting string literals.
+     */
+    static boolean isInsideComment(String content, int offset) {
+        boolean inBlockComment = false;
+        boolean inHtmlComment = false;
+        boolean inString = false;
+        char stringChar = 0;
+
+        for (int i = 0; i < offset && i < content.length(); i++) {
+            char c = content.charAt(i);
+            char next = (i + 1 < content.length()) ? content.charAt(i + 1) : 0;
+
+            if (inString) {
+                if (c == '\\') { i++; continue; }
+                if (c == stringChar) { inString = false; }
+                continue;
+            }
+            if (inBlockComment) {
+                if (c == '*' && next == '/') { inBlockComment = false; i++; }
+                continue;
+            }
+            if (inHtmlComment) {
+                if (c == '-' && next == '-'
+                    && i + 2 < content.length() && content.charAt(i + 2) == '>') {
+                    inHtmlComment = false;
+                    i += 2;
+                }
+                continue;
+            }
+            // String literal start
+            if (c == '"' || c == '\'') {
+                inString = true;
+                stringChar = c;
+                continue;
+            }
+            // Block comment start
+            if (c == '/' && next == '*') { inBlockComment = true; i++; continue; }
+            // HTML/XML comment start
+            if (c == '<' && next == '!'
+                && i + 3 < content.length()
+                && content.charAt(i + 2) == '-' && content.charAt(i + 3) == '-') {
+                inHtmlComment = true;
+                i += 3;
+                continue;
+            }
+            // Single-line comment: // or #
+            if ((c == '/' && next == '/') || c == '#') {
+                int lineEnd = content.indexOf('\n', i);
+                if (lineEnd == -1) { lineEnd = content.length(); }
+                if (offset <= lineEnd) { return true; }
+                i = lineEnd;
+                continue;
+            }
+        }
+        return inBlockComment || inHtmlComment;
     }
 
     /**

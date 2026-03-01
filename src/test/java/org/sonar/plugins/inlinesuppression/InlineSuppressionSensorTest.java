@@ -146,6 +146,18 @@ class InlineSuppressionSensorTest {
     }
 
     @Test
+    void shouldReportIssueForVbNetSuppressMessage() throws Exception {
+        setupMocks("<SuppressMessage(\"SonarAnalyzer\", \"S1234\")>\nPublic Sub Tp()\nEnd Sub", "vbnet");
+
+        sensor.execute(context);
+
+        ArgumentCaptor<RuleKey> ruleKeyCaptor = ArgumentCaptor.forClass(RuleKey.class);
+        verify(newIssue).forRule(ruleKeyCaptor.capture());
+        assertThat(ruleKeyCaptor.getValue().repository()).isEqualTo("suppression-audit-vbnet");
+        verify(newIssue).save();
+    }
+
+    @Test
     void shouldUseCorrectRuleKeyForPython() throws Exception {
         setupMocks("x = 1  # NOSONAR", "py");
 

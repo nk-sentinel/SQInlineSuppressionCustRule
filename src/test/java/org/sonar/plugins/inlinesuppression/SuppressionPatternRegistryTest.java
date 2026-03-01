@@ -23,8 +23,9 @@ class SuppressionPatternRegistryTest {
 
         assertThat(matches).hasSize(1);
         assertThat(matches.get(0).type()).isEqualTo(SuppressionType.NOSONAR);
-        assertThat(matches.get(0).lineNumber()).isEqualTo(1);
+        assertThat(matches.get(0).actualLineNumber()).isEqualTo(1);
         assertThat(matches.get(0).message()).contains("NOSONAR");
+        assertThat(matches.get(0).message()).contains("line 1");
     }
 
     @Test
@@ -69,8 +70,57 @@ class SuppressionPatternRegistryTest {
             SuppressionPatternRegistry.findSuppressions(content);
 
         assertThat(matches).hasSize(2);
-        assertThat(matches.get(0).lineNumber()).isEqualTo(1);
-        assertThat(matches.get(1).lineNumber()).isEqualTo(3);
+        assertThat(matches.get(0).actualLineNumber()).isEqualTo(1);
+        assertThat(matches.get(1).actualLineNumber()).isEqualTo(3);
+    }
+
+    @Test
+    void shouldNotDetectNosonarInsideDoubleQuotedString() {
+        String content = "let fp = \"NOSONAR is a keyword\";";
+        List<SuppressionPatternRegistry.SuppressionMatch> matches =
+            SuppressionPatternRegistry.findSuppressions(content);
+
+        assertThat(matches).isEmpty();
+    }
+
+    @Test
+    void shouldNotDetectNosonarInsideSingleQuotedString() {
+        String content = "let fp = 'NOSONAR';";
+        List<SuppressionPatternRegistry.SuppressionMatch> matches =
+            SuppressionPatternRegistry.findSuppressions(content);
+
+        assertThat(matches).isEmpty();
+    }
+
+    @Test
+    void shouldDetectNosonarInCommentButNotInStringOnSameLine() {
+        String content = "let x = \"NOSONAR\"; // NOSONAR";
+        List<SuppressionPatternRegistry.SuppressionMatch> matches =
+            SuppressionPatternRegistry.findSuppressions(content);
+
+        assertThat(matches).hasSize(1);
+        assertThat(matches.get(0).type()).isEqualTo(SuppressionType.NOSONAR);
+    }
+
+    @Test
+    void shouldNotDetectNosonarInStringWithEscapedQuote() {
+        String content = "let x = \"escaped \\\" NOSONAR\";";
+        List<SuppressionPatternRegistry.SuppressionMatch> matches =
+            SuppressionPatternRegistry.findSuppressions(content);
+
+        assertThat(matches).isEmpty();
+    }
+
+    @Test
+    void shouldStripStringLiteralsCorrectly() {
+        assertThat(SuppressionPatternRegistry.stripStringLiterals("\"NOSONAR\""))
+            .doesNotContain("NOSONAR");
+        assertThat(SuppressionPatternRegistry.stripStringLiterals("'NOSONAR'"))
+            .doesNotContain("NOSONAR");
+        assertThat(SuppressionPatternRegistry.stripStringLiterals("code // NOSONAR"))
+            .contains("NOSONAR");
+        assertThat(SuppressionPatternRegistry.stripStringLiterals("\"escaped \\\" NOSONAR\""))
+            .doesNotContain("NOSONAR");
     }
 
     // -----------------------------------------------------------------------
@@ -338,6 +388,58 @@ class SuppressionPatternRegistryTest {
     }
 
     // -----------------------------------------------------------------------
+    // <SuppressMessage> (VB.NET) detection
+    // -----------------------------------------------------------------------
+
+    @Test
+    void shouldDetectVbNetSuppressMessageWithSonarCategory() {
+        String content = "<SuppressMessage(\"SonarAnalyzer\", \"S1234\")>\nPublic Sub Tp() \nEnd Sub";
+        List<SuppressionPatternRegistry.SuppressionMatch> matches =
+            SuppressionPatternRegistry.findSuppressions(content);
+
+        assertThat(matches).hasSize(1);
+        assertThat(matches.get(0).type()).isEqualTo(SuppressionType.SUPPRESS_MESSAGE);
+        assertThat(matches.get(0).message()).contains("<SuppressMessage>");
+    }
+
+    @Test
+    void shouldDetectVbNetAssemblyLevelSuppressMessage() {
+        String content = "<Assembly: SuppressMessage(\"SonarAnalyzer\", \"S1234\")>\n";
+        List<SuppressionPatternRegistry.SuppressionMatch> matches =
+            SuppressionPatternRegistry.findSuppressions(content);
+
+        assertThat(matches).hasSize(1);
+    }
+
+    @Test
+    void shouldDetectVbNetFullyQualifiedSuppressMessage() {
+        String content = "<System.Diagnostics.CodeAnalysis.SuppressMessage(\"SonarAnalyzer\", \"S1234\")>\nPublic Sub Tp()\nEnd Sub";
+        List<SuppressionPatternRegistry.SuppressionMatch> matches =
+            SuppressionPatternRegistry.findSuppressions(content);
+
+        assertThat(matches).hasSize(1);
+    }
+
+    @Test
+    void shouldDetectVbNetSuppressMessageWithBareRuleId() {
+        String content = "<SuppressMessage(\"Category\", \"S1234\")>\nPublic Sub Tp()\nEnd Sub";
+        List<SuppressionPatternRegistry.SuppressionMatch> matches =
+            SuppressionPatternRegistry.findSuppressions(content);
+
+        assertThat(matches).hasSize(1);
+        assertThat(matches.get(0).message()).contains("S1234");
+    }
+
+    @Test
+    void shouldNotDetectVbNetSuppressMessageForNonSonarCategory() {
+        String content = "<SuppressMessage(\"Microsoft.Design\", \"CA1062\")>\nPublic Sub Fp()\nEnd Sub";
+        List<SuppressionPatternRegistry.SuppressionMatch> matches =
+            SuppressionPatternRegistry.findSuppressions(content);
+
+        assertThat(matches).isEmpty();
+    }
+
+    // -----------------------------------------------------------------------
     // Clean files (no suppressions)
     // -----------------------------------------------------------------------
 
@@ -457,5 +559,78 @@ class SuppressionPatternRegistryTest {
             .contains("java:S106")
             .contains("kotlin:S1186")
             .contains("typescript:S3776");
+    }
+
+    // -----------------------------------------------------------------------
+    // NOSONAR self-suppression workaround (line offset)
+    // -----------------------------------------------------------------------
+
+    @Test
+    void shouldReportNosonarOnAdjacentLineToAvoidSelfSuppression() {
+        String content = "line1\nint x = 1; // NOSONAR\nline3";
+        List<SuppressionPatternRegistry.SuppressionMatch> matches =
+            SuppressionPatternRegistry.findSuppressions(content);
+
+        assertThat(matches).hasSize(1);
+        assertThat(matches.get(0).actualLineNumber()).isEqualTo(2);
+        assertThat(matches.get(0).lineNumber()).isEqualTo(1); // reported on line above
+        assertThat(matches.get(0).message()).contains("line 2");
+    }
+
+    @Test
+    void shouldReportNosonarOnLineBelowWhenOnFirstLine() {
+        String content = "int x = 1; // NOSONAR\nline2";
+        List<SuppressionPatternRegistry.SuppressionMatch> matches =
+            SuppressionPatternRegistry.findSuppressions(content);
+
+        assertThat(matches).hasSize(1);
+        assertThat(matches.get(0).lineNumber()).isEqualTo(2); // pushed to line below
+        assertThat(matches.get(0).actualLineNumber()).isEqualTo(1);
+    }
+
+    @Test
+    void shouldReportNosonarOnSameLineWhenSingleLineFile() {
+        String content = "int x = 1; // NOSONAR";
+        List<SuppressionPatternRegistry.SuppressionMatch> matches =
+            SuppressionPatternRegistry.findSuppressions(content);
+
+        assertThat(matches).hasSize(1);
+        assertThat(matches.get(0).lineNumber()).isEqualTo(1); // no adjacent line
+        assertThat(matches.get(0).actualLineNumber()).isEqualTo(1);
+    }
+
+    @Test
+    void shouldHandleConsecutiveNosonarLines() {
+        String content = "line1\nline2 // NOSONAR\nline3 // NOSONAR\nline4";
+        List<SuppressionPatternRegistry.SuppressionMatch> matches =
+            SuppressionPatternRegistry.findSuppressions(content);
+
+        assertThat(matches).hasSize(2);
+        assertThat(matches.get(0).actualLineNumber()).isEqualTo(2);
+        assertThat(matches.get(1).actualLineNumber()).isEqualTo(3);
+        assertThat(matches.get(0).lineNumber()).isEqualTo(1);
+        assertThat(matches.get(1).lineNumber()).isEqualTo(2);
+    }
+
+    @Test
+    void nosonarMessageShouldReferenceActualLineNumber() {
+        String content = "line1\nline2\nint x = 1; // NOSONAR\nline4";
+        List<SuppressionPatternRegistry.SuppressionMatch> matches =
+            SuppressionPatternRegistry.findSuppressions(content);
+
+        assertThat(matches).hasSize(1);
+        assertThat(matches.get(0).message()).contains("line 3");
+        assertThat(matches.get(0).actualLineNumber()).isEqualTo(3);
+        assertThat(matches.get(0).lineNumber()).isEqualTo(2);
+    }
+
+    @Test
+    void nonNosonarMatchesShouldHaveSameLineAndActualLine() {
+        String content = "@SuppressWarnings(\"java:S106\")\npublic void foo() {}";
+        List<SuppressionPatternRegistry.SuppressionMatch> matches =
+            SuppressionPatternRegistry.findSuppressions(content);
+
+        assertThat(matches).hasSize(1);
+        assertThat(matches.get(0).lineNumber()).isEqualTo(matches.get(0).actualLineNumber());
     }
 }

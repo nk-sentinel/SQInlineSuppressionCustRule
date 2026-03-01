@@ -11,11 +11,12 @@ SonarQube allows developers to suppress findings using inline mechanisms like `/
 | Pattern | Languages | Example |
 |---------|-----------|---------|
 | `NOSONAR` | All (16 languages) | `int x = 1; // NOSONAR` |
-| `@SuppressWarnings` | Java, Kotlin | `@SuppressWarnings("java:S106")` |
-| `@SuppressWarnings("all")` | Java, Kotlin | `@SuppressWarnings("all")` |
-| `@SuppressWarnings` (multi-rule) | Java, Kotlin | `@SuppressWarnings({"java:S106", "java:S1186"})` |
+| `@SuppressWarnings` | Java, Kotlin, Scala | `@SuppressWarnings("java:S106")` |
+| `@SuppressWarnings("all")` | Java, Kotlin, Scala | `@SuppressWarnings("all")` |
+| `@SuppressWarnings` (multi-rule) | Java, Kotlin, Scala | `@SuppressWarnings({"java:S106", "java:S1186"})` |
 | `@Suppress` | Kotlin | `@Suppress("kotlin:S1234")` |
-| `[SuppressMessage]` | C#, VB.NET | `[SuppressMessage("SonarAnalyzer", "S1234")]` |
+| `[SuppressMessage]` | C# | `[SuppressMessage("SonarAnalyzer", "S1234")]` |
+| `<SuppressMessage>` | VB.NET | `<SuppressMessage("SonarAnalyzer", "S1234")>` |
 
 ### Recognized SonarQube Rule Prefixes
 
@@ -27,9 +28,19 @@ Bare rule IDs (e.g., `S1234`) are also detected as a fallback.
 
 ### What Is NOT Flagged
 
-- `@SuppressWarnings("unchecked")` — standard Java compiler warnings without SonarQube rule references
-- `@SuppressWarnings("deprecation")` — same as above
-- `@SuppressLint(...)` — Android Lint suppressions (not SonarQube)
+The plugin avoids false positives by ignoring:
+
+- **Standard compiler warnings** — `@SuppressWarnings("unchecked")`, `@SuppressWarnings("deprecation")`, `@Suppress("UNUSED_PARAMETER")`
+- **Non-SonarQube linter directives** — `@SuppressLint(...)` (Android), `eslint-disable`, `@ts-ignore`, `nolint`, `rubocop:disable`, `phpcs:ignore`, `stylelint-disable`
+- **Non-Sonar [SuppressMessage] categories** — `[SuppressMessage("Microsoft.Design", "CA1062")]`, `[SuppressMessage("StyleCop", "SA1600")]`
+- **NOSONAR inside string literals** — `let x = "NOSONAR is a keyword"` (not a comment, not a suppression)
+- **NOSONAR as part of variable names** — `myNOSONARflag` (no word boundary match)
+- **Annotations/attributes inside comments** — `// @SuppressWarnings("java:S106")` (comment text, not actual code)
+
+### Known Limitations
+
+- **Java `@SuppressWarnings("all")` self-suppression** — The Java analyzer honors `@SuppressWarnings("all")` at scope level and suppresses ALL issues in the annotated element, including our plugin's issue. This is a SonarQube platform limitation. The plugin applies a line-offset workaround (reporting on the adjacent line), which works for Kotlin and Scala but may still be suppressed by Java's scope-level handling.
+- **NOSONAR line offset** — To avoid SonarQube's built-in `NoSonarFilter` (which suppresses ALL issues on NOSONAR lines, including ours), NOSONAR issues are reported on the line above (or below for line 1). The issue message includes the actual line number for reference.
 
 ## Supported Languages
 
@@ -116,11 +127,16 @@ SQInlineSuppressionCustRule/
 │  │                               ┌──────────▼───────────┐  │  │
 │  │                               │ PatternRegistry      │  │  │
 │  │                               │                      │  │  │
-│  │                               │ Regex patterns:      │  │  │
+│  │                               │ Detection patterns:  │  │  │
 │  │                               │  - NOSONAR           │  │  │
 │  │                               │  - @SuppressWarnings │  │  │
 │  │                               │  - @Suppress         │  │  │
 │  │                               │  - [SuppressMessage] │  │  │
+│  │                               │  - <SuppressMessage> │  │  │
+│  │                               │                      │  │  │
+│  │                               │ Filtering:           │  │  │
+│  │                               │  - String literals   │  │  │
+│  │                               │  - Comment context   │  │  │
 │  │                               │                      │  │  │
 │  │                               │ Rule ref extraction: │  │  │
 │  │                               │  - Prefixed (java:S) │  │  │
@@ -199,19 +215,62 @@ Sonar-Version: 10.11.0.2468
 
 5. Run a new analysis on your project. Any inline suppressions will appear as **Blocker Vulnerabilities**.
 
+## Testing
+
+The plugin includes **117 unit tests** covering:
+
+- **Pattern detection** (96 tests) — NOSONAR (all comment styles, case-insensitive, string literal exclusion), `@SuppressWarnings`, `@Suppress`, `[SuppressMessage]`, `<SuppressMessage>`, multiline annotations, comment-context filtering, line-offset workarounds
+- **Sensor integration** (11 tests) — file scanning, issue creation, language routing, error handling
+- **Rule definitions** (10 tests) — repository creation for all 16 languages
+
+Validated against a **14-language test project** with categorized true positive, false positive, and edge case scenarios. Detection accuracy: **99%** (1 known platform limitation with Java `@SuppressWarnings("all")`).
+
+### Validation Test Project
+
+A dedicated multi-language test project is available for end-to-end validation of the plugin after installation:
+
+**Repository:** [SQInlineSuppressionCustRuleTestProj](https://github.com/ShadowOpenTech/SQInlineSuppressionCustRuleTestProj.git)
+
+The test project contains 14 language-specific files (Java, Kotlin, C#, VB.NET, Python, JavaScript, TypeScript, Go, PHP, Ruby, Scala, HTML, CSS, XML) with categorized test cases:
+
+- **True Positives** — suppression patterns the plugin must detect (NOSONAR comments, `@SuppressWarnings`, `@Suppress`, `[SuppressMessage]`, `<SuppressMessage>`, embedded NOSONAR in descriptive text)
+- **False Positives** — patterns the plugin must ignore (compiler warnings, non-Sonar linter directives, string literals, variable names)
+- **Edge Cases** — multiline annotations, whitespace in rule references, NOSONAR in block comments
+
+#### Running the Test Scan
+
+1. Install the plugin in SonarQube (see [Installation](#installation)).
+2. Activate the `InlineSuppression` rule in Quality Profiles for all 14 languages.
+3. Clone the test project and run the scanner:
+
+   ```bash
+   git clone https://github.com/ShadowOpenTech/SQInlineSuppressionCustRuleTestProj.git
+   cd SQInlineSuppressionCustRuleTestProj
+   sonar-scanner
+   ```
+
+   > **Note:** The project includes a pre-configured `sonar-project.properties` with project key `sq-plugin-test`. Update `sonar.host.url` and `sonar.token` as needed for your SonarQube instance.
+
+4. Review the scan results in SonarQube:
+   - All **true positive** lines should have **Blocker Vulnerability** issues
+   - All **false positive** lines should have **no issues** from the `suppression-audit-*` repositories
+   - Expected results: **102 issues**, **0 false positives** (1 known miss: Java `@SuppressWarnings("all")` — see [Known Limitations](#known-limitations))
+
 ## CI/CD
 
 This project includes a GitHub Actions workflow (`.github/workflows/ci.yml`) that runs automatically on:
 
-- **Push** to `main` or `develop` branches
+- **Push** to any branch
 - **Pull requests** targeting `main` or `develop`
 - **Manual trigger** via `workflow_dispatch`
 
 The pipeline:
-1. Builds the plugin with Java 17
+1. Builds the plugin with Java 17 (Temurin)
 2. Runs all unit tests
-3. Uploads the plugin JAR as a build artifact (available for 30 days)
-4. Caches Maven dependencies for faster subsequent builds
+3. Uploads the plugin JAR as a build artifact (retained for 30 days)
+4. Uploads test results (retained for 14 days)
+5. Creates a GitHub Release with the plugin JAR (pre-release for non-main branches)
+6. Caches Maven dependencies for faster subsequent builds
 
 See [.github/workflows/ci.yml](.github/workflows/ci.yml) for the full configuration.
 

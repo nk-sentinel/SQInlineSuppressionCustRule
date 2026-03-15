@@ -60,9 +60,11 @@ public final class SuppressionPatternRegistry {
     static final Pattern NOSONAR_PATTERN =
         Pattern.compile("\\bNOSONAR\\b", Pattern.CASE_INSENSITIVE);
 
-    /** Matches double-quoted and single-quoted string literals (handles escaped quotes). */
+    /** Matches double-quoted and single-quoted string literals (handles escaped quotes).
+     *  Uses the unrolled-loop form to avoid alternation inside *, preventing
+     *  StackOverflowError in Java's NFA regex engine on very long single-line strings. */
     private static final Pattern STRING_LITERAL_PATTERN =
-        Pattern.compile("\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'");
+        Pattern.compile("\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\"|'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'");
 
     /** @SuppressWarnings annotation — captures the annotation value content */
     static final Pattern SUPPRESS_WARNINGS_PATTERN =

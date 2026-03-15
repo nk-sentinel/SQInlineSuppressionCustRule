@@ -66,36 +66,40 @@ public final class SuppressionPatternRegistry {
     private static final Pattern STRING_LITERAL_PATTERN =
         Pattern.compile("\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\"|'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'");
 
-    /** @SuppressWarnings annotation — captures the annotation value content */
+    /** @SuppressWarnings annotation — captures the annotation value content.
+     *  Capped at 5000 chars to prevent O(n²) scan on malformed code with unclosed parens. */
     static final Pattern SUPPRESS_WARNINGS_PATTERN =
-        Pattern.compile("@SuppressWarnings\\s*\\(([\\s\\S]*?)\\)");
+        Pattern.compile("@SuppressWarnings\\s*\\(([\\s\\S]{0,5000}?)\\)");
 
     /**
      * @Suppress annotation (Kotlin) — negative lookahead prevents matching
      * @SuppressWarnings or @SuppressLint (Android).
+     * Capped at 5000 chars to prevent O(n²) scan on malformed code with unclosed parens.
      */
     static final Pattern KOTLIN_SUPPRESS_PATTERN =
-        Pattern.compile("@Suppress(?!Warnings|Lint)\\s*\\(([\\s\\S]*?)\\)");
+        Pattern.compile("@Suppress(?!Warnings|Lint)\\s*\\(([\\s\\S]{0,5000}?)\\)");
 
     /**
      * [SuppressMessage] attribute (C#) — handles optional attribute targets
      * (assembly:, module:, etc.) and fully-qualified name.
+     * Capped at 5000 chars to prevent O(n²) scan on malformed code with unclosed parens.
      */
     static final Pattern SUPPRESS_MESSAGE_PATTERN =
         Pattern.compile(
             "\\[\\s*(?:(?:assembly|module|type|method|return|param)\\s*:\\s*)?"
             + "(?:System\\.Diagnostics\\.CodeAnalysis\\.)?SuppressMessage\\s*\\("
-            + "([\\s\\S]*?)\\)\\s*\\]");
+            + "([\\s\\S]{0,5000}?)\\)\\s*\\]");
 
     /**
      * &lt;SuppressMessage&gt; attribute (VB.NET) — handles optional attribute targets
      * (Assembly:, Module:, etc.) and fully-qualified name with angle-bracket syntax.
+     * Capped at 5000 chars to prevent O(n²) scan on malformed code with unclosed parens.
      */
     static final Pattern VB_SUPPRESS_MESSAGE_PATTERN =
         Pattern.compile(
             "<\\s*(?:(?:Assembly|Module|Type|Method|Return|Param)\\s*:\\s*)?"
             + "(?:System\\.Diagnostics\\.CodeAnalysis\\.)?SuppressMessage\\s*\\("
-            + "([\\s\\S]*?)\\)\\s*>",
+            + "([\\s\\S]{0,5000}?)\\)\\s*>",
             Pattern.CASE_INSENSITIVE);
 
     /**
@@ -131,6 +135,9 @@ public final class SuppressionPatternRegistry {
      * @return list of detected suppressions (may be empty, never null)
      */
     public static List<SuppressionMatch> findSuppressions(String content) {
+        if (content == null || content.isEmpty()) {
+            return new ArrayList<>();
+        }
         List<SuppressionMatch> matches = new ArrayList<>();
         Set<Integer> reportedLines = new HashSet<>();
 
@@ -161,7 +168,11 @@ public final class SuppressionPatternRegistry {
     private static void findNosonarMatches(String content, Set<Integer> reportedLines,
                                            List<SuppressionMatch> matches) {
         String[] lines = content.split("\n", -1);
-        int totalLines = lines.length;
+        // Exclude phantom empty element from a trailing newline so reportLine
+        // never exceeds the file's actual indexed line count in SonarQube.
+        int totalLines = (lines.length > 0 && lines[lines.length - 1].isEmpty())
+            ? Math.max(1, lines.length - 1)
+            : lines.length;
         for (int i = 0; i < lines.length; i++) {
             if (NOSONAR_PATTERN.matcher(stripStringLiterals(lines[i])).find()) {
                 int actualLine = i + 1;
@@ -192,7 +203,11 @@ public final class SuppressionPatternRegistry {
                                                SuppressionType type, String annotationName,
                                                Set<Integer> reportedLines,
                                                List<SuppressionMatch> matches) {
-        int totalLines = content.split("\n", -1).length;
+        // Exclude phantom empty element from a trailing newline (same guard as findNosonarMatches).
+        String[] allLines = content.split("\n", -1);
+        int totalLines = (allLines.length > 0 && allLines[allLines.length - 1].isEmpty())
+            ? Math.max(1, allLines.length - 1)
+            : allLines.length;
         Matcher matcher = pattern.matcher(content);
         while (matcher.find()) {
             if (isInsideComment(content, matcher.start())) {
